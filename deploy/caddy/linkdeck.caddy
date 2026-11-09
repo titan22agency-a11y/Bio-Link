@@ -1,0 +1,15 @@
+# /etc/caddy/sites/linkdeck.caddy — used on titan-server (Caddy fronts several apps).
+# Caddy issues the TLS certificate automatically. DNS: A record "links" -> server IP (Cloudflare proxied).
+links.titan22agency.com {
+	encode gzip
+	header Strict-Transport-Security "max-age=31536000"
+	handle_path /uploads/* {
+		root * /opt/linkdeck-data/uploads
+		header Cache-Control "public, max-age=31536000, immutable"
+		header X-Content-Type-Options nosniff
+		file_server
+	}
+	handle {
+		reverse_proxy 127.0.0.1:3500
+	}
+}

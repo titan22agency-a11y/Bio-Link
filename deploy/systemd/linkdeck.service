@@ -1,0 +1,20 @@
+# /etc/systemd/system/linkdeck.service
+# Secrets live in /etc/linkdeck.env (root:linkdeck, 640) — never in the repo.
+[Unit]
+Description=LinkDeck bio-link builder
+After=network.target postgresql.service
+
+[Service]
+User=linkdeck
+WorkingDirectory=/opt/linkdeck/.next/standalone
+EnvironmentFile=/etc/linkdeck.env
+ExecStart=/usr/bin/node /opt/linkdeck/.next/standalone/server.js
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/linkdeck/.next/standalone/.next /opt/linkdeck-data
+MemoryMax=600M
+
+[Install]
+WantedBy=multi-user.target
