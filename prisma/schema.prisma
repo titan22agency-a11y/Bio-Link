@@ -1,0 +1,205 @@
+// LinkDeck data model.
+//
+// Phase 1: ADMIN / SUPPORT users build pages on behalf of CLIENT accounts.
+// Phase 2: CLIENT users self-register, own their pages and pay for a plan.
+// Everything Phase 2 needs (roles, plans, subscriptions, payment events)
+// already exists here so the next release needs no destructive migration.
+
+generator client {
+  provider = "prisma-client-js"
+  // "debian-openssl-3.0.x" covers the node:20-slim Docker image.
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN   // full control, manages staff
+  SUPPORT // builds and publishes client pages
+  CLIENT  // owns pages (Phase 2: edits own pages)
+}
+
+enum Plan {
+  FREE
+  PRO
+  BUSINESS
+}
+
+enum PageStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum EventType {
+  VIEW
+  CLICK
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  EXPIRED
+}
+
+enum PaymentProvider {
+  MANUAL
+  STRIPE
+  PAYMOB
+  FAWRY
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  passwordHash  String?
+  role          Role      @default(CLIENT)
+  // Phase 1: false for clients (staff log in for them). Phase 2: true after signup.
+  canLogin      Boolean   @default(true)
+  emailVerified DateTime?
+  phone         String?
+  company       String?
+  notes         String?   // internal support notes
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  ownedPages    Page[]        @relation("PageOwner")
+  editedPages   Page[]        @relation("PageEditor")
+  subscription  Subscription?
+  auditLogs     AuditLog[]
+
+  @@index([role])
+}
+
+model Page {
+  id           String     @id @default(cuid())
+  // Used for ourdomain.com/<slug> and <slug>.ourdomain.com
+  slug         String     @unique
+  // Optional fully custom domain, e.g. links.clientbrand.com
+  customDomain String?    @unique
+  title        String
+  status       PageStatus @default(DRAFT)
+
+  // Working copy edited in the builder.
+  draft        Json
+  // Snapshot served to the public. Only updated on "Publish".
+  published    Json?
+  publishedAt  DateTime?
+
+  // SEO overrides (fall back to profile name / bio).
+  seoTitle       String?
+  seoDescription String?
+  ogImage        String?
+  noIndex        Boolean @default(false)
+
+  ownerId      String
+  owner        User     @relation("PageOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  lastEditorId String?
+  lastEditor   User?    @relation("PageEditor", fields: [lastEditorId], references: [id], onDelete: SetNull)
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  events       AnalyticsEvent[]
+  dailyStats   DailyStat[]
+  submissions  ContactSubmission[]
+
+  @@index([ownerId])
+  @@index([status])
+}
+
+// Raw event log. Kept short-term; rolled into DailyStat for long-term charts.
+model AnalyticsEvent {
+  id        String    @id @default(cuid())
+  pageId    String
+  page      Page      @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  type      EventType
+  blockId   String?   // which link/button was clicked
+  target    String?   // destination URL for clicks
+  visitorId String?   // salted hash of IP + UA (no raw PII)
+  referrer  String?
+  country   String?
+  device    String?   // mobile | tablet | desktop
+  createdAt DateTime  @default(now())
+
+  @@index([pageId, type, createdAt])
+  @@index([pageId, blockId])
+}
+
+model DailyStat {
+  id      String   @id @default(cuid())
+  pageId  String
+  page    Page     @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  date    DateTime @db.Date
+  views   Int      @default(0)
+  uniques Int      @default(0)
+  clicks  Int      @default(0)
+
+  @@unique([pageId, date])
+}
+
+model ContactSubmission {
+  id        String   @id @default(cuid())
+  pageId    String
+  page      Page     @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  blockId   String?
+  name      String?
+  email     String?
+  phone     String?
+  message   String
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([pageId, createdAt])
+}
+
+// ─── Phase 2: billing ──────────────────────────────────────────────────
+
+model Subscription {
+  id                 String             @id @default(cuid())
+  userId             String             @unique
+  user               User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan               Plan               @default(FREE)
+  status             SubscriptionStatus @default(ACTIVE)
+  provider           PaymentProvider    @default(MANUAL)
+  providerCustomerId String?
+  providerSubId      String?
+  currentPeriodEnd   DateTime?
+  cancelAtPeriodEnd  Boolean            @default(false)
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  @@index([provider, providerSubId])
+}
+
+// Every webhook is stored first; (provider, eventId) makes handlers idempotent.
+model PaymentEvent {
+  id          String          @id @default(cuid())
+  provider    PaymentProvider
+  eventId     String
+  type        String
+  payload     Json
+  processed   Boolean         @default(false)
+  error       String?
+  createdAt   DateTime        @default(now())
+
+  @@unique([provider, eventId])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action    String   // e.g. page.publish, page.update, client.create
+  entityId  String?
+  meta      Json?
+  createdAt DateTime @default(now())
+
+  @@index([entityId])
+}

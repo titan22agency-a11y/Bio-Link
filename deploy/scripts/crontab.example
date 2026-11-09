@@ -1,0 +1,13 @@
+# crontab -e  (adjust /opt/linkdeck to the repo path)
+
+# 03:00 — database + uploads backup
+0 3 * * * cd /opt/linkdeck && ./deploy/scripts/backup.sh >> logs/backup.log 2>&1
+
+# 03:30 — roll raw analytics older than 30 days into daily totals
+# Docker:
+30 3 * * * cd /opt/linkdeck && docker compose --profile tools run --rm migrate npx tsx scripts/rollup-analytics.ts >> logs/rollup.log 2>&1
+# PM2 / bare metal (use this line instead):
+# 30 3 * * * cd /opt/linkdeck && npx tsx scripts/rollup-analytics.ts >> logs/rollup.log 2>&1
+
+# Certbot renews automatically via its systemd timer; reload Nginx after:
+# 0 4 * * 1 certbot renew --quiet --deploy-hook "systemctl reload nginx"
